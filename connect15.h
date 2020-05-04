@@ -176,16 +176,20 @@ public:
         );
     }
 
-    int count_threats(Card card) const {
-        int count = 0;
+    std::pair<bool, int> must_respond_to_threat(Card card) const {
+        std::pair<bool, int> result = { false, 0 };
         for (int column = -1; column <= int(columns_.size()); ++column) {
             Board next = apply(column, card);
             if (next.is_win_involving(column, card)) {
-                ++count;
-                if (count >= 2) break;
+                if (result.first) {
+                    // There are two threats! Checkmate!
+                    return { true, -2 };
+                } else {
+                    result = { true, column };
+                }
             }
         }
-        return count;
+        return result;
     }
 };
 
@@ -197,27 +201,32 @@ struct State {
             s.unseen_cards_[Red][v] = 2;
             s.unseen_cards_[Black][v] = 2;
         }
-        s.top_card_[Red] = s.draw_next_card(rand, Red);
-        s.top_card_[Black] = s.draw_next_card(rand, Black);
+        s.draw_random_card(rand, Red);
+        s.draw_random_card(rand, Black);
         return s;
     }
 
     template<class Random>
-    Card draw_next_card(Random rand, Color who) {
-        int sum = std::accumulate(std::begin(unseen_cards_[who]), std::end(unseen_cards_[who]), 0);
+    void draw_random_card(Random rand, Color who) {
+        int sum = count_unseen_cards(who);
         if (sum == 0) {
-            return Card();
+            top_card_[who] = Card();
+        } else {
+            assert(0 < sum && sum <= 14);
+            int k = rand() % sum;
+            int v = 0;
+            while (k >= 0) {
+                k -= unseen_cards_[who][++v];
+            }
+            draw_this_card(who, v);
         }
-        assert(0 < sum && sum <= 14);
-        int k = rand() % sum;
-        int v = 0;
-        while (k >= 0) {
-            k -= unseen_cards_[who][++v];
-        }
+    }
+
+    void draw_this_card(Color who, int v) {
         assert(1 <= v && v <= 7);
         assert(unseen_cards_[who][v] >= 1);
         unseen_cards_[who][v] -= 1;
-        return Card(who, v);
+        top_card_[who] = Card(who, v);
     }
 
     std::string toString() const {
@@ -227,7 +236,7 @@ struct State {
         return result;
     }
 
-    Color whose_move() const {
+    Color active_player() const {
         return who_;
     }
 
@@ -235,11 +244,26 @@ struct State {
         return top_card_[who_].color() == Nobody;
     }
 
+    std::pair<bool, int> must_respond_to_threat() const {
+        Color whont = Color(1 - who_);
+        if (top_card_[whont].color() == Nobody) {
+            return { false, 0 };
+        }
+        return board_.must_respond_to_threat(top_card_[whont]);
+    }
+
+    bool apply_in_place_without_drawing(int column) {
+        Card card = std::exchange(top_card_[who_], Card());
+        board_.apply_in_place(column, card);
+        who_ = Color(1 - who_);
+        return board_.is_win_involving(column, card);
+    }
+
     template<class Random>
     bool apply_in_place(Random rand, int column) {
         Card card = top_card_[who_];
         board_.apply_in_place(column, card);
-        top_card_[who_] = draw_next_card(rand, who_);
+        draw_random_card(rand, who_);
         who_ = Color(1 - who_);
         return board_.is_win_involving(column, card);
     }
@@ -252,6 +276,17 @@ struct State {
     }
 
     int count_columns() const { return board_.count_columns(); }
+
+    int count_unseen_cards(Color who, int v) const {
+        assert(1 <= v && v <= 7);
+        return unseen_cards_[who][v];
+    }
+
+    int count_unseen_cards(Color who) const {
+        int sum = std::accumulate(std::begin(unseen_cards_[who]), std::end(unseen_cards_[who]), 0);
+        assert(0 <= sum && sum <= 14);
+        return sum;
+    }
 
 private:
     explicit State() = default;
