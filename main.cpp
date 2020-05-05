@@ -1,6 +1,6 @@
 
 #include "connect15.h"
-#include "ab.h"
+#include "ab-timed.h"
 #include <iostream>
 #include <stdlib.h>
 #include <time.h>
@@ -14,7 +14,7 @@ int main()
     for (Color who = Red; true; who = Color(1 - who)) {
         std::string swho = ((who == Red) ? "Red" : "Black");
         std::cout << s.toString() << "\n";
-        auto vm = recursively_evaluate(simplest_eval, s, 4);
+        auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(300));
         std::cout << "AI thinks " << swho << "'s best move is " << vm.second << " (value " << vm.first << ").\n";
         std::cout << swho << "'s move? " << std::flush;
         std::string smove;
