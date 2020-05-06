@@ -1,3 +1,4 @@
+#include <atomic>
 #include <condition_variable>
 #include <chrono>
 #include <deque>
@@ -15,8 +16,13 @@ double simplest_eval(const State& s)
     return (rand() % 2) ? 1 : -1;
 }
 
+int recursively_scheduled_tasks = 0;
+int recursively_evaluated_tasks = 0;
+std::atomic<bool> deadline_was_hit;
+
 struct WorkQueue {
     std::vector<std::thread> workers_;
+    bool stop_ = false;
     std::deque<std::function<void()>> tasks_;
     std::mutex mtx_;
     std::condition_variable cv_;
@@ -24,27 +30,37 @@ struct WorkQueue {
     explicit WorkQueue(int n) {
         for (int i=0; i < n; ++i) {
             workers_.emplace_back([this]() {
+                std::unique_lock<std::mutex> lk(mtx_);
                 while (true) {
-                    std::unique_lock<std::mutex> lk(mtx_);
-                    while (tasks_.empty()) {
+                    while (!(stop_ || tasks_.empty())) {
                         cv_.wait(lk);
                     }
+                    if (stop_) break;
+                    assert(!tasks_.empty());
                     auto f = std::move(tasks_.front());
                     tasks_.pop_front();
+                    recursively_evaluated_tasks += 1;
                     lk.unlock();
-                    printf("WorkQueue is running a task\n");
                     f();
+                    lk.lock();
                 }
             });
         }
     }
     void schedule(std::function<void()> f) {
-        printf("WorkQueue is adding a task\n");
         std::unique_lock<std::mutex> lk(mtx_);
+        recursively_scheduled_tasks += 1;
         tasks_.push_back(std::move(f));
-        printf("WorkQueue is done adding a task\n");
         lk.unlock();
         cv_.notify_one();
+    }
+
+    ~WorkQueue() {
+        stop_ = true;
+        cv_.notify_all();
+        for (auto& t : workers_) {
+            t.join();
+        }
     }
 };
 
@@ -52,48 +68,14 @@ static WorkQueue g_workQueue(1);
 
 using Deadline = std::chrono::steady_clock::time_point;
 
-using Move = int;
-
 using Result = std::pair<double, int>;
 
 struct Task : std::enable_shared_from_this<Task> {
-    std::condition_variable cv_;
-    std::mutex mtx_;
     Result result_ = { INT_MIN, 0 };
 
     template<class Callable>
     void spawn_thread(Callable f) {
         g_workQueue.schedule(f);
-    }
-
-    template<class Predicate, class Do>
-    void when(Predicate p, Do f) {
-        spawn_thread([this, p, f, keepalive = shared_from_this()]() {
-            std::unique_lock<std::mutex> lk(mtx_);
-            while (!p()) {
-                this->cv_.wait(lk);
-            }
-            lk.unlock();
-            f();
-        });
-    }
-
-    template<class Predicate, class Do>
-    void tailcall_when(Predicate p, Do f) {
-        std::unique_lock<std::mutex> lk(mtx_);
-        while (!p()) {
-            this->cv_.wait(lk);
-        }
-        lk.unlock();
-        f();
-    }
-
-    template<class Do>
-    void with_notification(Do f) {
-        std::unique_lock<std::mutex> lk(mtx_);
-        f();
-        lk.unlock();
-        cv_.notify_all();
     }
 
     void got_one_subresult() { do_got_one_subresult(); }
@@ -107,33 +89,33 @@ private:
 struct ExpectCardTask : Task {
     LeafEvaluationFunction eval_;
     State s_;
-    int waiting_for_subresults_ = 0;
+    std::atomic<int> waiting_for_subresults_ {0};
     std::shared_ptr<Task> parent_task_ = nullptr;
     std::vector<std::shared_ptr<Task>> subtasks_;
     std::vector<int> weights_;
     Deadline deadline_;
 
-    explicit ExpectCardTask(std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, Deadline d) :
-        eval_(e), s_(s), parent_task_(parent), deadline_(d) {}
+    explicit ExpectCardTask(std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, int move, Deadline d) :
+        eval_(e), s_(s), parent_task_(parent), deadline_(d) {
+        result_.second = move;
+    }
 
 private:
     void do_got_one_subresult() override {
-        this->waiting_for_subresults_ -= 1;
+        if (--this->waiting_for_subresults_ == 0) {
+            this->combine_subresults();
+        }
     }
 
-    void set_and_notify(double v, int m) {
-        this->result_ = {v, m};
-        parent_task_->with_notification([&]() {
-            parent_task_->got_one_subresult();
-        });
+    void set_and_notify(double v) {
+        this->result_.first = v;
+        parent_task_->got_one_subresult();
     }
 
     void do_evaluate_and_notify() override;
 
     void combine_subresults() {
         assert(this->waiting_for_subresults_ <= 0);
-        printf("ExpectCardTask : Combining %d subresults...\n", (int)subtasks_.size());
-        Result r = { INT_MIN, 0 };
         double sum = 0;
         int count = 0;
         assert(subtasks_.size() == weights_.size());
@@ -141,14 +123,14 @@ private:
             sum += subtasks_[i]->result_.first;
             count += weights_[i];
         }
-        set_and_notify(-sum / count, 0);
+        set_and_notify(-sum / count);
     }
 };
 
 struct PickMoveTask : Task {
     LeafEvaluationFunction eval_;
     State s_;
-    int waiting_for_subresults_ = 0;
+    std::atomic<int> waiting_for_subresults_ {0};
     std::shared_ptr<Task> parent_task_ = nullptr;
     std::promise<Result> root_promise_;
     std::vector<std::shared_ptr<Task>> subtasks_;
@@ -162,15 +144,15 @@ struct PickMoveTask : Task {
 
 private:
     void do_got_one_subresult() override {
-        this->waiting_for_subresults_ -= 1;
+        if (--this->waiting_for_subresults_ == 0) {
+            this->combine_subresults();
+        }
     }
 
     void set_and_notify(double v, int m) {
         this->result_ = {v, m};
         if (parent_task_) {
-            parent_task_->with_notification([&]() {
-                parent_task_->got_one_subresult();
-            });
+            parent_task_->got_one_subresult();
         } else {
             root_promise_.set_value({v, m});
         }
@@ -182,6 +164,9 @@ private:
             return;
         }
         if (std::chrono::steady_clock::now() >= deadline_) {
+            if (deadline_was_hit.exchange(true) == false) {
+                printf("Deadline was hit in %s!\n", __PRETTY_FUNCTION__);
+            }
             set_and_notify(eval_(s_), 0);
             return;
         }
@@ -194,22 +179,16 @@ private:
                 set_and_notify(INT_MAX, m);
                 return;
             }
-            subtasks_.push_back(std::make_shared<ExpectCardTask>(shared_from_this(), eval_, next, deadline_));
+            subtasks_.push_back(std::make_shared<ExpectCardTask>(shared_from_this(), eval_, next, m, deadline_));
         }
         waiting_for_subresults_ = subtasks_.size();
         for (auto&& t : subtasks_) {
             spawn_thread([t] { t->evaluate_and_notify(); });
         }
-        tailcall_when([self = shared_from_this()]() {
-            return (self->waiting_for_subresults_ <= 0);
-        }, [self = shared_from_this()]() {
-            self->combine_subresults();
-        });
     }
 
     void combine_subresults() {
         assert(this->waiting_for_subresults_ <= 0);
-        printf("PickMoveTask : Combining %d subresults...\n", (int)subtasks_.size());
         Result r = { INT_MIN, 0 };
         for (auto&& sub : subtasks_) {
             r = std::max(r, sub->result_);
@@ -221,7 +200,10 @@ private:
 void ExpectCardTask::do_evaluate_and_notify()
 {
     if (std::chrono::steady_clock::now() >= deadline_) {
-        set_and_notify(eval_(s_), 0);
+        if (deadline_was_hit.exchange(true) == false) {
+            printf("Deadline was hit in %s!\n", __PRETTY_FUNCTION__);
+        }
+        set_and_notify(eval_(s_));
         return;
     }
     Color who = s_.active_player();
@@ -239,22 +221,17 @@ void ExpectCardTask::do_evaluate_and_notify()
     for (auto&& t : subtasks_) {
         spawn_thread([t] { t->evaluate_and_notify(); });
     }
-    tailcall_when([this, keepalive = shared_from_this()]() {
-        return (this->waiting_for_subresults_ <= 0);
-    }, [this, keepalive = shared_from_this()]() {
-        this->combine_subresults();
-    });
 }
-
 
 Result recursively_evaluate(LeafEvaluationFunction eval, const State& s, std::chrono::milliseconds timeout)
 {
+    recursively_scheduled_tasks = 0;
+    recursively_evaluated_tasks = 0;
+    deadline_was_hit = false;
     auto deadline = std::chrono::steady_clock::now() + timeout;
     std::promise<Result> root;
     std::future<Result> result = root.get_future();
     auto head = std::make_shared<PickMoveTask>(std::move(root), eval, s, deadline);
-    puts("cpA");
     head->evaluate_and_notify();
-    puts("cpB");
     return result.get();
 }
