@@ -18,7 +18,16 @@ double simplest_eval(const State& s)
 
 int recursively_scheduled_tasks = 0;
 int recursively_evaluated_tasks = 0;
-std::atomic<bool> deadline_was_hit;
+std::atomic<int> total_task_objects {0};
+
+
+int fetch_and_decrement_if_positive(std::atomic<int>& x) {
+    int expected = x.load();
+    while ((expected > 0) && !x.compare_exchange_weak(expected, expected - 1)) {
+        // go around again
+    }
+    return expected;
+}
 
 struct WorkQueue {
     std::vector<std::thread> workers_;
@@ -32,7 +41,7 @@ struct WorkQueue {
             workers_.emplace_back([this]() {
                 std::unique_lock<std::mutex> lk(mtx_);
                 while (true) {
-                    while (!(stop_ || tasks_.empty())) {
+                    while (tasks_.empty() && !stop_) {
                         cv_.wait(lk);
                     }
                     if (stop_) break;
@@ -64,7 +73,7 @@ struct WorkQueue {
     }
 };
 
-static WorkQueue g_workQueue(1);
+static WorkQueue g_workQueue(2);
 
 using Deadline = std::chrono::steady_clock::time_point;
 
@@ -78,11 +87,17 @@ struct Task : std::enable_shared_from_this<Task> {
         g_workQueue.schedule(f);
     }
 
+    Task() { ++total_task_objects; }
+    Task(Task&&) = delete;
+    ~Task() { --total_task_objects; }
+
     void got_one_subresult() { do_got_one_subresult(); }
+    void got_awesome_subresult() { do_got_awesome_subresult(); }
     void evaluate_and_notify() { do_evaluate_and_notify(); }
 
 private:
     virtual void do_got_one_subresult() = 0;
+    virtual void do_got_awesome_subresult() = 0;
     virtual void do_evaluate_and_notify() = 0;
 };
 
@@ -100,22 +115,39 @@ struct ExpectCardTask : Task {
         result_.second = move;
     }
 
+    ~ExpectCardTask() {
+        assert(notified_parent_);
+        assert(subtasks_.empty());
+        assert(parent_task_ == nullptr);
+    }
 private:
+    bool notified_parent_ = false;
+
+    void do_got_awesome_subresult() override {
+        assert(false);
+    }
+
     void do_got_one_subresult() override {
-        if (--this->waiting_for_subresults_ == 0) {
-            this->combine_subresults();
+        if (fetch_and_decrement_if_positive(waiting_for_subresults_) == 1) {
+            combine_subresults();
         }
     }
 
     void set_and_notify(double v) {
+        notified_parent_ = true;
         this->result_.first = v;
-        parent_task_->got_one_subresult();
+        if (v >= double(INT_MAX)) {
+            parent_task_->got_awesome_subresult();
+        } else {
+            parent_task_->got_one_subresult();
+        }
+        parent_task_ = nullptr;
     }
 
     void do_evaluate_and_notify() override;
 
     void combine_subresults() {
-        assert(this->waiting_for_subresults_ <= 0);
+        assert(waiting_for_subresults_ <= 0);
         double sum = 0;
         int count = 0;
         assert(subtasks_.size() == weights_.size());
@@ -123,6 +155,7 @@ private:
             sum += subtasks_[i]->result_.first;
             count += weights_[i];
         }
+        subtasks_.clear();
         set_and_notify(-sum / count);
     }
 };
@@ -142,17 +175,32 @@ struct PickMoveTask : Task {
     explicit PickMoveTask(std::promise<Result> parent, LeafEvaluationFunction e, State s, Deadline d) :
         eval_(e), s_(s), root_promise_(std::move(parent)), deadline_(d) {}
 
+    ~PickMoveTask() {
+        assert(notified_parent_);
+        assert(subtasks_.empty());
+        assert(parent_task_ == nullptr);
+    }
 private:
+    bool notified_parent_ = false;
+
     void do_got_one_subresult() override {
-        if (--this->waiting_for_subresults_ == 0) {
-            this->combine_subresults();
+        if (fetch_and_decrement_if_positive(waiting_for_subresults_) == 1) {
+            combine_subresults();
+        }
+    }
+
+    void do_got_awesome_subresult() override {
+        if (waiting_for_subresults_.exchange(0) > 0) {
+            combine_subresults();
         }
     }
 
     void set_and_notify(double v, int m) {
-        this->result_ = {v, m};
+        notified_parent_ = true;
         if (parent_task_) {
+            this->result_ = {v, m};
             parent_task_->got_one_subresult();
+            parent_task_ = nullptr;
         } else {
             root_promise_.set_value({v, m});
         }
@@ -164,9 +212,6 @@ private:
             return;
         }
         if (std::chrono::steady_clock::now() >= deadline_) {
-            if (deadline_was_hit.exchange(true) == false) {
-                printf("Deadline was hit in %s!\n", __PRETTY_FUNCTION__);
-            }
             set_and_notify(eval_(s_), 0);
             return;
         }
@@ -188,11 +233,12 @@ private:
     }
 
     void combine_subresults() {
-        assert(this->waiting_for_subresults_ <= 0);
+        assert(waiting_for_subresults_ <= 0);
         Result r = { INT_MIN, 0 };
         for (auto&& sub : subtasks_) {
             r = std::max(r, sub->result_);
         }
+        subtasks_.clear();
         set_and_notify(r.first, r.second);
     }
 };
@@ -200,9 +246,6 @@ private:
 void ExpectCardTask::do_evaluate_and_notify()
 {
     if (std::chrono::steady_clock::now() >= deadline_) {
-        if (deadline_was_hit.exchange(true) == false) {
-            printf("Deadline was hit in %s!\n", __PRETTY_FUNCTION__);
-        }
         set_and_notify(eval_(s_));
         return;
     }
@@ -221,13 +264,17 @@ void ExpectCardTask::do_evaluate_and_notify()
     for (auto&& t : subtasks_) {
         spawn_thread([t] { t->evaluate_and_notify(); });
     }
+    if (subtasks_.size() == 0) {
+        // This is a tie game, because no cards are left!
+        set_and_notify(0);
+        return;
+    }
 }
 
 Result recursively_evaluate(LeafEvaluationFunction eval, const State& s, std::chrono::milliseconds timeout)
 {
     recursively_scheduled_tasks = 0;
     recursively_evaluated_tasks = 0;
-    deadline_was_hit = false;
     auto deadline = std::chrono::steady_clock::now() + timeout;
     std::promise<Result> root;
     std::future<Result> result = root.get_future();

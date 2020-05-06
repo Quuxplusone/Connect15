@@ -8,6 +8,8 @@
 #define LOOP_FOREVER 1
 #define ALL_AI_PLAYERS 1
 
+int wins[3] = { 0, 0, 0 };
+
 int main()
 {
     srand(time(nullptr));
@@ -20,10 +22,10 @@ int main()
 
     for (Color who = Red; true; who = Color(1 - who)) {
         std::string swho = ((who == Red) ? "Red" : "Black");
-        auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(300));
+        auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(100));
         std::cout << s.toString() << "\n";
         std::cout << "AI thinks " << swho << "'s best move is " << vm.second << " (value " << vm.first << ").\n";
-        std::cout << "AI scheduled " << recursively_scheduled_tasks << " tasks and ran " << recursively_evaluated_tasks << ".\n";
+        printf("Scheduled %d tasks, ran %d tasks, %d task objects still on heap.\n", recursively_scheduled_tasks, recursively_evaluated_tasks, total_task_objects.load());
         std::cout << swho << "'s move? " << std::flush;
 #if ALL_AI_PLAYERS
         std::string smove = "a";
@@ -40,14 +42,18 @@ int main()
         }
         bool won = s.apply_in_place(rand, move);
         if (won) {
-            std::cout << "You just won the game!\n";
+            std::cout << swho << " just won the game!\n";
+            wins[who] += 1;
             break;
         }
         if (s.is_tie_game()) {
             std::cout << "Tie game!\n";
+            wins[Nobody] += 1;
             break;
         }
     }
+
+    printf("%*s Wins: Red %d, Black %d, Nobody %d\n", 40, "", wins[Red], wins[Black], wins[Nobody]);
 
 #if LOOP_FOREVER
     }
