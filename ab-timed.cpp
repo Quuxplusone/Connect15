@@ -11,6 +11,9 @@
 #include "ab-timed.h"
 #include "connect15.h"
 
+#define LOOK_FOR_CHECKS 1
+#define NUM_THREADS 2
+
 double simplest_eval(const State& s)
 {
     return (rand() % 2) ? 1 : -1;
@@ -18,12 +21,20 @@ double simplest_eval(const State& s)
 
 int recursively_scheduled_tasks = 0;
 int recursively_evaluated_tasks = 0;
-std::atomic<int> total_task_objects {0};
+std::atomic<int> max_search_depth {0};
 
 
 int fetch_and_decrement_if_positive(std::atomic<int>& x) {
     int expected = x.load();
     while ((expected > 0) && !x.compare_exchange_weak(expected, expected - 1)) {
+        // go around again
+    }
+    return expected;
+}
+
+int fetch_and_max(std::atomic<int>& x, int y) {
+    int expected = x.load();
+    while ((expected < y) && !x.compare_exchange_weak(expected, y)) {
         // go around again
     }
     return expected;
@@ -73,7 +84,7 @@ struct WorkQueue {
     }
 };
 
-static WorkQueue g_workQueue(2);
+static WorkQueue g_workQueue(NUM_THREADS);
 
 using Deadline = std::chrono::steady_clock::time_point;
 
@@ -98,10 +109,6 @@ struct Task : std::enable_shared_from_this<Task> {
         g_workQueue.schedule(f);
     }
 
-    Task() { ++total_task_objects; }
-    Task(Task&&) = delete;
-    ~Task() { --total_task_objects; }
-
     void got_one_subresult() { do_got_one_subresult(); }
     void got_awesome_subresult() { do_got_awesome_subresult(); }
     void evaluate_and_notify() { do_evaluate_and_notify(); }
@@ -113,6 +120,7 @@ private:
 };
 
 struct ExpectCardTask : Task {
+    int depth_;
     LeafEvaluationFunction eval_;
     State s_;
     std::atomic<int> waiting_for_subresults_ {0};
@@ -121,8 +129,8 @@ struct ExpectCardTask : Task {
     std::vector<int> weights_;
     Deadline deadline_;
 
-    explicit ExpectCardTask(std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, int move, Deadline d) :
-        eval_(e), s_(s), parent_task_(parent), deadline_(d) {
+    explicit ExpectCardTask(int depth, std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, int move, Deadline d) :
+        depth_(depth), eval_(e), s_(s), parent_task_(parent), deadline_(d) {
         result_.second = move;
     }
 
@@ -151,17 +159,18 @@ private:
     void do_evaluate_and_notify() override;
 
     void combine_subresults() {
+        fetch_and_max(max_search_depth, depth_);
         assert(waiting_for_subresults_ <= 0);
         double sum = 0;
         int count = 0;
         assert(subtasks_.size() == weights_.size());
-        auto is_win = [](const auto& p) { return p->result_.first >= double(INT_MAX-1); };
-        auto is_loss = [](const auto& p) { return p->result_.first <= double(INT_MIN+1); };
-        if (std::all_of(subtasks_.begin(), subtasks_.end(), is_win)) {
+        auto is_his_win = [](const auto& p) { return p->result_.first >= double(INT_MAX-1); };
+        auto is_his_loss = [](const auto& p) { return p->result_.first <= double(INT_MIN+1); };
+        if (std::all_of(subtasks_.begin(), subtasks_.end(), is_his_loss)) {
             set_and_notify(INT_MAX);
             return;
         }
-        double ceiling = std::any_of(subtasks_.begin(), subtasks_.end(), is_loss) ? 20 : INT_MAX;
+        double ceiling = std::any_of(subtasks_.begin(), subtasks_.end(), is_his_win) ? 20 : INT_MAX;
         for (int i=0; i < subtasks_.size(); ++i) {
             sum += std::min(subtasks_[i]->result_.first, ceiling);
             count += weights_[i];
@@ -171,6 +180,7 @@ private:
 };
 
 struct PickMoveTask : Task {
+    int depth_;
     LeafEvaluationFunction eval_;
     State s_;
     std::atomic<int> waiting_for_subresults_ {0};
@@ -178,11 +188,11 @@ struct PickMoveTask : Task {
     std::vector<std::shared_ptr<Task>> subtasks_;
     Deadline deadline_;
 
-    explicit PickMoveTask(std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, Deadline d) :
-        eval_(e), s_(s), parent_task_(std::weak_ptr<Task>(parent)), deadline_(d) {}
+    explicit PickMoveTask(int depth, std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, Deadline d) :
+        depth_(depth), eval_(e), s_(s), parent_task_(std::weak_ptr<Task>(parent)), deadline_(d) {}
 
     explicit PickMoveTask(std::promise<Result> parent, LeafEvaluationFunction e, State s, Deadline d) :
-        eval_(e), s_(s), parent_task_(std::move(parent)), deadline_(d) {}
+        depth_(0), eval_(e), s_(s), parent_task_(std::move(parent)), deadline_(d) {}
 
 private:
     void do_got_one_subresult() override {
@@ -221,6 +231,18 @@ private:
             set_and_notify(eval_(s_), 0);
             return;
         }
+
+#if LOOK_FOR_CHECKS
+        auto forced_move = s_.must_respond_to_threat();
+        if (forced_move.first) {
+            if (forced_move.second == -2) {
+                // We are threatened two ways; we lose.
+                set_and_notify(INT_MIN, 0);
+                return;
+            }
+        }
+#endif
+
         int who = s_.active_player();
         int columns = s_.count_columns();
         if (columns <= 1) columns = 0;
@@ -230,7 +252,12 @@ private:
                 set_and_notify(INT_MAX, m);
                 return;
             }
-            subtasks_.push_back(std::make_shared<ExpectCardTask>(shared_from_this(), eval_, next, m, deadline_));
+#if LOOK_FOR_CHECKS
+            if (forced_move.first && m != forced_move.second) {
+                continue;
+            }
+#endif
+            subtasks_.push_back(std::make_shared<ExpectCardTask>(depth_+1, shared_from_this(), eval_, next, m, deadline_));
         }
         waiting_for_subresults_ = subtasks_.size();
         for (auto&& t : subtasks_) {
@@ -239,6 +266,7 @@ private:
     }
 
     void combine_subresults() {
+        fetch_and_max(max_search_depth, depth_);
         assert(waiting_for_subresults_ <= 0);
         Result r = { INT_MIN, 0 };
         for (auto&& sub : subtasks_) {
@@ -261,7 +289,7 @@ void ExpectCardTask::do_evaluate_and_notify()
         assert(0 <= weight && weight <= 2);
         if (weight != 0) {
             next.draw_this_card(who, v);
-            subtasks_.push_back(std::make_shared<PickMoveTask>(shared_from_this(), eval_, next, deadline_));
+            subtasks_.push_back(std::make_shared<PickMoveTask>(depth_+1, shared_from_this(), eval_, next, deadline_));
             weights_.push_back(weight);
         }
     }
@@ -280,6 +308,7 @@ Result recursively_evaluate(LeafEvaluationFunction eval, const State& s, std::ch
 {
     recursively_scheduled_tasks = 0;
     recursively_evaluated_tasks = 0;
+    max_search_depth = 0;
     auto deadline = std::chrono::steady_clock::now() + timeout;
     std::promise<Result> root;
     std::future<Result> result = root.get_future();

@@ -22,10 +22,11 @@ int main()
 
     for (Color who = Red; true; who = Color(1 - who)) {
         std::string swho = ((who == Red) ? "Red" : "Black");
-        auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(100));
+        auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(150));
         std::cout << s.toString() << "\n";
         std::cout << "AI thinks " << swho << "'s best move is " << vm.second << " (value " << vm.first << ").\n";
-        printf("Scheduled %d tasks, ran %d tasks, %d task objects still on heap.\n", recursively_scheduled_tasks, recursively_evaluated_tasks, total_task_objects.load());
+        printf("Scheduled %d tasks, ran %d tasks, search depth %d.\n",
+               recursively_scheduled_tasks, recursively_evaluated_tasks, max_search_depth.load());
         std::cout << swho << "'s move? " << std::flush;
 #if ALL_AI_PLAYERS
         std::string smove = "a";
