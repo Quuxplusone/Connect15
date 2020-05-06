@@ -79,6 +79,17 @@ using Deadline = std::chrono::steady_clock::time_point;
 
 using Result = std::pair<double, int>;
 
+// Poor man's variant, since OSX 10.14 doesn't support std::variant.
+template<class A, class B>
+struct Variant {
+    explicit Variant(A a) : has_a(true), a(std::move(a)) { }
+    explicit Variant(B b) : has_a(false), b(std::move(b)) { }
+    template<class F> void visit(F f) { if (has_a) f(a); else f(b); }
+    bool has_a;
+    A a;
+    B b;
+};
+
 struct Task : std::enable_shared_from_this<Task> {
     Result result_ = { INT_MIN, 0 };
 
@@ -105,7 +116,7 @@ struct ExpectCardTask : Task {
     LeafEvaluationFunction eval_;
     State s_;
     std::atomic<int> waiting_for_subresults_ {0};
-    std::shared_ptr<Task> parent_task_ = nullptr;
+    std::weak_ptr<Task> parent_task_;
     std::vector<std::shared_ptr<Task>> subtasks_;
     std::vector<int> weights_;
     Deadline deadline_;
@@ -115,14 +126,7 @@ struct ExpectCardTask : Task {
         result_.second = move;
     }
 
-    ~ExpectCardTask() {
-        assert(notified_parent_);
-        assert(subtasks_.empty());
-        assert(parent_task_ == nullptr);
-    }
 private:
-    bool notified_parent_ = false;
-
     void do_got_awesome_subresult() override {
         assert(false);
     }
@@ -134,14 +138,14 @@ private:
     }
 
     void set_and_notify(double v) {
-        notified_parent_ = true;
         this->result_.first = v;
-        if (v >= double(INT_MAX)) {
-            parent_task_->got_awesome_subresult();
-        } else {
-            parent_task_->got_one_subresult();
+        if (auto p = parent_task_.lock()) {
+            if (v >= double(INT_MAX)) {
+                p->got_awesome_subresult();
+            } else {
+                p->got_one_subresult();
+            }
         }
-        parent_task_ = nullptr;
     }
 
     void do_evaluate_and_notify() override;
@@ -151,11 +155,17 @@ private:
         double sum = 0;
         int count = 0;
         assert(subtasks_.size() == weights_.size());
+        auto is_win = [](const auto& p) { return p->result_.first >= double(INT_MAX-1); };
+        auto is_loss = [](const auto& p) { return p->result_.first <= double(INT_MIN+1); };
+        if (std::all_of(subtasks_.begin(), subtasks_.end(), is_win)) {
+            set_and_notify(INT_MAX);
+            return;
+        }
+        double ceiling = std::any_of(subtasks_.begin(), subtasks_.end(), is_loss) ? 20 : INT_MAX;
         for (int i=0; i < subtasks_.size(); ++i) {
-            sum += subtasks_[i]->result_.first;
+            sum += std::min(subtasks_[i]->result_.first, ceiling);
             count += weights_[i];
         }
-        subtasks_.clear();
         set_and_notify(-sum / count);
     }
 };
@@ -164,25 +174,17 @@ struct PickMoveTask : Task {
     LeafEvaluationFunction eval_;
     State s_;
     std::atomic<int> waiting_for_subresults_ {0};
-    std::shared_ptr<Task> parent_task_ = nullptr;
-    std::promise<Result> root_promise_;
+    Variant<std::weak_ptr<Task>, std::promise<Result>> parent_task_;
     std::vector<std::shared_ptr<Task>> subtasks_;
     Deadline deadline_;
 
     explicit PickMoveTask(std::shared_ptr<Task> parent, LeafEvaluationFunction e, State s, Deadline d) :
-        eval_(e), s_(s), parent_task_(parent), deadline_(d) {}
+        eval_(e), s_(s), parent_task_(std::weak_ptr<Task>(parent)), deadline_(d) {}
 
     explicit PickMoveTask(std::promise<Result> parent, LeafEvaluationFunction e, State s, Deadline d) :
-        eval_(e), s_(s), root_promise_(std::move(parent)), deadline_(d) {}
+        eval_(e), s_(s), parent_task_(std::move(parent)), deadline_(d) {}
 
-    ~PickMoveTask() {
-        assert(notified_parent_);
-        assert(subtasks_.empty());
-        assert(parent_task_ == nullptr);
-    }
 private:
-    bool notified_parent_ = false;
-
     void do_got_one_subresult() override {
         if (fetch_and_decrement_if_positive(waiting_for_subresults_) == 1) {
             combine_subresults();
@@ -195,15 +197,19 @@ private:
         }
     }
 
-    void set_and_notify(double v, int m) {
-        notified_parent_ = true;
-        if (parent_task_) {
+    void set_and_notify_impl(std::weak_ptr<Task>& parent, double v, int m) {
+        if (auto p = parent.lock()) {
             this->result_ = {v, m};
-            parent_task_->got_one_subresult();
-            parent_task_ = nullptr;
-        } else {
-            root_promise_.set_value({v, m});
+            p->got_one_subresult();
         }
+    }
+
+    void set_and_notify_impl(std::promise<Result>& parent, double v, int m) {
+        parent.set_value({v, m});
+    }
+
+    void set_and_notify(double v, int m) {
+        parent_task_.visit([&](auto& x) { set_and_notify_impl(x, v, m); });
     }
 
     void do_evaluate_and_notify() override {
@@ -238,7 +244,6 @@ private:
         for (auto&& sub : subtasks_) {
             r = std::max(r, sub->result_);
         }
-        subtasks_.clear();
         set_and_notify(r.first, r.second);
     }
 };
