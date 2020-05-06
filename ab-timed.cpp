@@ -1,5 +1,6 @@
 #include <condition_variable>
 #include <chrono>
+#include <deque>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -14,6 +15,41 @@ double simplest_eval(const State& s)
     return (rand() % 2) ? 1 : -1;
 }
 
+struct WorkQueue {
+    std::vector<std::thread> workers_;
+    std::deque<std::function<void()>> tasks_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+
+    explicit WorkQueue(int n) {
+        for (int i=0; i < n; ++i) {
+            workers_.emplace_back([this]() {
+                while (true) {
+                    std::unique_lock<std::mutex> lk(mtx_);
+                    while (tasks_.empty()) {
+                        cv_.wait(lk);
+                    }
+                    auto f = std::move(tasks_.front());
+                    tasks_.pop_front();
+                    lk.unlock();
+                    printf("WorkQueue is running a task\n");
+                    f();
+                }
+            });
+        }
+    }
+    void schedule(std::function<void()> f) {
+        printf("WorkQueue is adding a task\n");
+        std::unique_lock<std::mutex> lk(mtx_);
+        tasks_.push_back(std::move(f));
+        printf("WorkQueue is done adding a task\n");
+        lk.unlock();
+        cv_.notify_one();
+    }
+};
+
+static WorkQueue g_workQueue(1);
+
 using Deadline = std::chrono::steady_clock::time_point;
 
 using Move = int;
@@ -27,7 +63,7 @@ struct Task : std::enable_shared_from_this<Task> {
 
     template<class Callable>
     void spawn_thread(Callable f) {
-        std::thread(f).detach();
+        g_workQueue.schedule(f);
     }
 
     template<class Predicate, class Do>
@@ -37,6 +73,7 @@ struct Task : std::enable_shared_from_this<Task> {
             while (!p()) {
                 this->cv_.wait(lk);
             }
+            lk.unlock();
             f();
         });
     }
@@ -47,6 +84,7 @@ struct Task : std::enable_shared_from_this<Task> {
         while (!p()) {
             this->cv_.wait(lk);
         }
+        lk.unlock();
         f();
     }
 
@@ -94,6 +132,7 @@ private:
 
     void combine_subresults() {
         assert(this->waiting_for_subresults_ <= 0);
+        printf("ExpectCardTask : Combining %d subresults...\n", (int)subtasks_.size());
         Result r = { INT_MIN, 0 };
         double sum = 0;
         int count = 0;
@@ -161,15 +200,16 @@ private:
         for (auto&& t : subtasks_) {
             spawn_thread([t] { t->evaluate_and_notify(); });
         }
-        tailcall_when([this, keepalive = shared_from_this()]() {
-            return (this->waiting_for_subresults_ <= 0);
-        }, [this, keepalive = shared_from_this()]() {
-            this->combine_subresults();
+        tailcall_when([self = shared_from_this()]() {
+            return (self->waiting_for_subresults_ <= 0);
+        }, [self = shared_from_this()]() {
+            self->combine_subresults();
         });
     }
 
     void combine_subresults() {
         assert(this->waiting_for_subresults_ <= 0);
+        printf("PickMoveTask : Combining %d subresults...\n", (int)subtasks_.size());
         Result r = { INT_MIN, 0 };
         for (auto&& sub : subtasks_) {
             r = std::max(r, sub->result_);
