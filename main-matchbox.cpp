@@ -1,4 +1,3 @@
-
 #include "ab-timed.h"
 #include "matchbox_player.h"
 #include "state.h"
@@ -6,18 +5,19 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define LOOP_FOREVER 1
-#define ALL_AI_PLAYERS 1
-
 int winsByColor[3] = { 0, 0, 0 };
 int winsByPlayer[3] = { 0, 0, 0 };
 
-int main()
+int main(int argc, char **argv)
 {
     MatchboxPlayer mp;
     mp.load_from_file("matchboxes.dat");
 
-    srand(time(nullptr));
+    if (argc > 1) {
+        srand(atoi(argv[1]));
+    } else {
+        srand(time(nullptr));
+    }
 
     for (size_t games_played = 0; true; ++games_played) {
         State s = State::initial(rand);
@@ -28,10 +28,18 @@ int main()
             std::cout << "AI thinks " << swho << "'s best move is " << vm.second << " (value " << vm.first << ").\n";
             printf("Scheduled %d tasks, ran %d tasks, search depth %d.\n",
                    recursively_scheduled_tasks, recursively_evaluated_tasks, max_search_depth.load());
+            if (vm.first >= INT_MAX) {
+                mp.record_definitely_winning_move(s, vm.second);
+            }
             return vm.second;
         };
 
         auto get_mp_move = [&](const char *swho) {
+            auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(50));
+            if (vm.first >= INT_MAX) {
+                std::cout << "AI sees the winning move " << vm.second << " and is forcing MP to take it.\n";
+                mp.record_definitely_winning_move(s, vm.second);
+            }
             int move = mp.pick_move(rand, s);
             std::cout << "MP picked " << move << " for " << swho << ".\n";
             return move;

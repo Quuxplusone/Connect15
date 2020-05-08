@@ -16,6 +16,7 @@ public:
     template<class Random>
     int pick_move(Random rand, const State& s);
 
+    void record_definitely_winning_move(const State& s, int m);
     void record_win_and_reset();
     void record_loss_and_reset();
     void record_tie_and_reset();
@@ -37,6 +38,11 @@ private:
                 if (weights_[i-1] != 0) return i;
             }
             return 0;
+        }
+
+        void record_definitely_winning_move(int m) {
+            memset(weights_, '\0', 28);
+            weights_[m+1] = 16;
         }
 
         void halve_all_weights() {
