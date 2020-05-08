@@ -167,15 +167,14 @@ private:
         auto is_his_win = [](const auto& p) { return p->result_.first >= double(INT_MAX-1); };
         auto is_his_loss = [](const auto& p) { return p->result_.first <= double(INT_MIN+1); };
         if (std::all_of(subtasks_.begin(), subtasks_.end(), is_his_loss)) {
-            set_and_notify(INT_MAX);
-            return;
+            return set_and_notify(INT_MAX);
         }
         double ceiling = std::any_of(subtasks_.begin(), subtasks_.end(), is_his_win) ? 20 : INT_MAX;
         for (int i=0; i < subtasks_.size(); ++i) {
             sum += std::min(subtasks_[i]->result_.first, ceiling);
             count += weights_[i];
         }
-        set_and_notify(-sum / count);
+        return set_and_notify(-sum / count);
     }
 };
 
@@ -224,12 +223,10 @@ private:
 
     void do_evaluate_and_notify() override {
         if (s_.is_tie_game()) {
-            set_and_notify(eval_(s_), 0);
-            return;
+            return set_and_notify(eval_(s_), 0);
         }
         if (std::chrono::steady_clock::now() >= deadline_) {
-            set_and_notify(eval_(s_), 0);
-            return;
+            return set_and_notify(eval_(s_), 0);
         }
 
 #if LOOK_FOR_CHECKS
@@ -238,8 +235,7 @@ private:
             if (forced_move.is_double_threat) {
                 // We are threatened two ways; we lose.
                 // Still, block one of the threats, in case our opponent is stupid.
-                set_and_notify(INT_MIN, forced_move.move);
-                return;
+                return set_and_notify(INT_MIN, forced_move.move);
             }
         }
 #endif
@@ -249,17 +245,16 @@ private:
 
         if (columns == 0) {
             // First move of the game; don't waste time exploring it.
-            set_and_notify(0, 0);
+            return set_and_notify(0, 0);
         } else if (columns == 1) {
             // Second move of the game; I conjecture that leaving the baseline open-ended is always a mistake.
-            set_and_notify(1, 1);
+            return set_and_notify(1, 1);
         }
 
         for (int m = -1; m <= columns; ++m) {
             State next = s_;
             if (next.apply_in_place_without_drawing(m)) {
-                set_and_notify(INT_MAX, m);
-                return;
+                return set_and_notify(INT_MAX, m);
             }
 #if LOOK_FOR_CHECKS
             if (forced_move.is_forced && m != forced_move.move) {
@@ -281,15 +276,14 @@ private:
         for (auto&& sub : subtasks_) {
             r = std::max(r, sub->result_);
         }
-        set_and_notify(r.first, r.second);
+        return set_and_notify(r.first, r.second);
     }
 };
 
 void ExpectCardTask::do_evaluate_and_notify()
 {
     if (std::chrono::steady_clock::now() >= deadline_) {
-        set_and_notify(eval_(s_));
-        return;
+        return set_and_notify(eval_(s_));
     }
     Color who = s_.active_player();
     State next = s_;
@@ -308,8 +302,7 @@ void ExpectCardTask::do_evaluate_and_notify()
     }
     if (subtasks_.size() == 0) {
         // This is a tie game, because no cards are left!
-        set_and_notify(0);
-        return;
+        return set_and_notify(0);
     }
 }
 
