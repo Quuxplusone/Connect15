@@ -2,8 +2,9 @@
 #include <iostream>
 #include <string>
 
-#include "connect15.h"
 #include "ab-timed.h"
+#include "board_etc.h"
+#include "state.h"
 
 void test1() {
     auto b = Board({

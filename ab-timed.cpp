@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 #include "ab-timed.h"
-#include "connect15.h"
+#include "state.h"
 
 #define LOOK_FOR_CHECKS 1
 #define NUM_THREADS 4

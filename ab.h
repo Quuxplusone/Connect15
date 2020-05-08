@@ -1,6 +1,6 @@
 #pragma once
 
-#include "connect15.h"
+#include "state.h"
 #include <utility>
 
 using LeafEvaluationFunction = double(*)(const State&);
