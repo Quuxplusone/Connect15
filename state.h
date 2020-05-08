@@ -61,21 +61,34 @@ struct State {
         return result;
     }
 
-    nibble_writer toPacked(nibble_writer it) const {
-        it.write(who_);
+    nibble_writer toPacked(nibble_writer it, bool flipHorizontal) const {
         it = top_card_[Red].toPacked(it);
         it = top_card_[Black].toPacked(it);
-        it = board_.toPacked(it);
+        it = board_.toPacked(it, flipHorizontal);
         return it;
     }
 
-    PackedState toPacked() const {
+    PackedState toPacked(bool flipHorizontal) const {
         PackedState p;
         nibble_writer it = nibble_writer(p.data_);
-        it = this->toPacked(it);
+        it = this->toPacked(it, flipHorizontal);
         uint8_t *end = it.round_off_and_get();
         assert((end - p.data_) <= sizeof p.data_);
         return p;
+    }
+
+    PackedState toPacked() const {
+        return this->toPacked(false);
+    }
+
+    std::pair<PackedState, bool> toPackedCanonical() const {
+        auto p1 = this->toPacked(false);
+        auto p2 = this->toPacked(true);
+        if (p1 < p2) {
+            return { p1, false };
+        } else {
+            return { p2, true };
+        }
     }
 
     Color active_player() const {

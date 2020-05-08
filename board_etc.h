@@ -38,8 +38,11 @@ struct Card {
     }
 
     nibble_writer toPacked(nibble_writer it) const {
-        int value = (who_ == Nobody) ? 0 : ((who_ * 8) + value_);
-        it.write(value);
+        if (who_ == Nobody) {
+            it.write(0);
+        } else {
+            it.write(value_ + 8 * who_);
+        }
         return it;
     }
 
@@ -138,9 +141,9 @@ public:
         return result;
     }
 
-    nibble_writer toPacked(nibble_writer it) const {
+    nibble_writer toPacked(nibble_writer it, bool flipHorizontal) const {
         for (int i=0; i < int(columns_.size()); ++i) {
-            const Column& col = columns_[i];
+            const Column& col = flipHorizontal ? columns_[columns_.size() - i - 1] : columns_[i];
             for (int j=0; j < col.size(); ++j) {
                 it = col[j].toPacked(it);
             }

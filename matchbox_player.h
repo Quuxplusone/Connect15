@@ -91,7 +91,8 @@ template<class Random>
 int MatchboxPlayer::pick_move(Random rand, const State& s)
 {
     int columns = s.count_columns();
-    PackedState key = s.toPacked();
+    std::pair<PackedState, bool> key_flipHorizontal = s.toPackedCanonical();
+    const PackedState& key = key_flipHorizontal.first;
     auto it = map_.find(key);
     if (it == map_.end()) {
         it = map_.emplace(key, Choices(s.count_columns() + 1)).first;
@@ -99,5 +100,8 @@ int MatchboxPlayer::pick_move(Random rand, const State& s)
     Choices& choices = it->second;
     int move = choices.pick_move(rand);
     history_.push_back({ &choices, move+1 });  // when move==-1, it affects weights_[0], and so on
+    if (key_flipHorizontal.second) {
+        move = s.count_columns() - move - 1;
+    }
     return move;
 }
