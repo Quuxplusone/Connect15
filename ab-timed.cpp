@@ -12,7 +12,7 @@
 #include "connect15.h"
 
 #define LOOK_FOR_CHECKS 1
-#define NUM_THREADS 2
+#define NUM_THREADS 4
 
 double simplest_eval(const State& s)
 {

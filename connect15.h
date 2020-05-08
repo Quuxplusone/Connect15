@@ -16,6 +16,13 @@ enum Color {
 struct Card {
     explicit Card() : who_(Nobody), value_(0) {}
     explicit Card(Color who, int value) : who_(who), value_(value) {}
+    explicit Card(const char *s) {
+        assert('1' <= s[0] && s[0] <= '7');
+        assert(s[1] == 'r' || s[1] == 'b');
+        assert(s[2] == '\0');
+        who_ = (s[1] == 'r') ? Red : Black;
+        value_ = (s[0] - '0');
+    }
     Color color() const { return who_; }
     int value() const { return value_; }
     std::string toString() const {
@@ -55,6 +62,32 @@ struct Board {
 
 public:
     explicit Board() = default;
+    explicit Board(std::vector<std::vector<Card>> cols) {
+        columns_.resize(cols.size());
+        for (int i=0; i < int(cols.size()); ++i) {
+            for (const Card& card : cols[i]) {
+                columns_[i].emplace_back(card);
+            }
+        }
+    }
+
+    void populate_unseen_cards(int8_t (&unseen_cards)[2][8]) {
+        for (int w=0; w < 2; ++w) {
+            unseen_cards[w][0] = 0;
+            for (int v=1; v <= 7; ++v) {
+                unseen_cards[w][v] = 2;
+            }
+        }
+        for (const Column& col : columns_) {
+            for (int i=0; i < col.size(); ++i) {
+                const Card& card = col[i];
+                assert(card.color() != Nobody);
+                int8_t& cell = unseen_cards[card.color()][card.value()];
+                cell -= 1;
+                assert(cell >= 0);
+            }
+        }
+    }
 
     int count_columns() const { return columns_.size(); }
 
@@ -194,6 +227,14 @@ public:
 };
 
 struct State {
+    explicit State(Color who, Card top_red, Card top_black, Board b) :
+        board_(std::move(b)),
+        top_card_{top_red, top_black},
+        who_(who)
+    {
+        board_.populate_unseen_cards(unseen_cards_);
+    }
+
     template<class Random>
     static State initial(Random rand) {
         State s;
