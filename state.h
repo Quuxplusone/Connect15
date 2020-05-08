@@ -99,10 +99,10 @@ struct State {
         return top_card_[who_].color() == Nobody;
     }
 
-    std::pair<bool, int> must_respond_to_threat() const {
+    Board::ForcedMove must_respond_to_threat() const {
         Color whont = Color(1 - who_);
         if (top_card_[whont].color() == Nobody) {
-            return { false, 0 };
+            return { false, false, 0 };
         }
         return board_.must_respond_to_threat(top_card_[whont]);
     }

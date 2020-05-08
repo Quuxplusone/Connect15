@@ -234,10 +234,11 @@ private:
 
 #if LOOK_FOR_CHECKS
         auto forced_move = s_.must_respond_to_threat();
-        if (forced_move.first) {
-            if (forced_move.second == -2) {
+        if (forced_move.is_forced) {
+            if (forced_move.is_double_threat) {
                 // We are threatened two ways; we lose.
-                set_and_notify(INT_MIN, 0);
+                // Still, block one of the threats, in case our opponent is stupid.
+                set_and_notify(INT_MIN, forced_move.move);
                 return;
             }
         }
@@ -261,7 +262,7 @@ private:
                 return;
             }
 #if LOOK_FOR_CHECKS
-            if (forced_move.first && m != forced_move.second) {
+            if (forced_move.is_forced && m != forced_move.move) {
                 continue;
             }
 #endif

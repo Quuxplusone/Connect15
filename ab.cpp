@@ -34,15 +34,14 @@ std::pair<double, int> recursively_evaluate(LeafEvaluationFunction eval, const S
     };
 
 #if 0
-    auto mm = s.must_respond_to_threat();
-    if (mm.first) {
-        int move = mm.second;
-        if (move == -2) {
-            return { INT_MIN, 0 };
+    auto fm = s.must_respond_to_threat();
+    if (fm.is_forced) {
+        if (fm.is_double_threat) {
+            return { INT_MIN, fm.move };
         } else {
             // This move is forced.
-            double expectation = expectation_for_this_move(move);
-            return  { expectation, move };
+            double expectation = expectation_for_this_move(fm.move);
+            return  { expectation, fm.move };
         }
     }
 #endif

@@ -232,16 +232,22 @@ public:
         );
     }
 
-    std::pair<bool, int> must_respond_to_threat(Card card) const {
-        std::pair<bool, int> result = { false, 0 };
+    struct ForcedMove {
+        bool is_forced;
+        bool is_double_threat;
+        int move;
+    };
+
+    ForcedMove must_respond_to_threat(Card card) const {
+        ForcedMove result = { false, false, 0 };
         for (int column = -1; column <= int(columns_.size()); ++column) {
             Board next = apply(column, card);
             if (next.is_win_involving(column, card)) {
-                if (result.first) {
+                if (result.is_forced) {
                     // There are two threats! Checkmate!
-                    return { true, -2 };
+                    return { true, true, result.move };
                 } else {
-                    result = { true, column };
+                    result = { true, false, column };
                 }
             }
         }
