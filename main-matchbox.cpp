@@ -2,6 +2,7 @@
 #include "matchbox_player.h"
 #include "state.h"
 #include <iostream>
+#include <random>
 #include <stdlib.h>
 #include <time.h>
 
@@ -10,17 +11,24 @@ int winsByPlayer[3] = { 0, 0, 0 };
 
 int main(int argc, char **argv)
 {
+    std::mt19937 true_rand;
+    true_rand.seed(time(nullptr));
+
     MatchboxPlayer mp;
     mp.load_from_file("matchboxes.dat");
 
+restart:
+    std::mt19937 reproducible_rand;
     if (argc > 1) {
-        srand(atoi(argv[1]));
+        reproducible_rand.seed(atoi(argv[1]));
     } else {
-        srand(time(nullptr));
+        reproducible_rand.seed(time(nullptr));
     }
+    for (int& i : winsByColor) i = 0;
+    for (int& i : winsByPlayer) i = 0;
 
     for (size_t games_played = 0; true; ++games_played) {
-        State s = State::initial(rand);
+        State s = State::initial(reproducible_rand);
         Color mpColor = Color(games_played % 2);
 
         auto get_bfs_move = [&](const char *swho) {
@@ -40,7 +48,7 @@ int main(int argc, char **argv)
                 std::cout << "AI sees the winning move " << vm.second << " and is forcing MP to take it.\n";
                 mp.record_definitely_winning_move(s, vm.second);
             }
-            int move = mp.pick_move(rand, s);
+            int move = mp.pick_move(true_rand, s);
             std::cout << "MP picked " << move << " for " << swho << ".\n";
             return move;
         };
@@ -54,7 +62,7 @@ int main(int argc, char **argv)
             } else {
                 move = get_bfs_move(swho);
             }
-            bool won = s.apply_in_place(rand, move);
+            bool won = s.apply_in_place(reproducible_rand, move);
             if (won) {
                 std::cout << swho << " just won the game!\n";
                 winsByColor[who] += 1;
@@ -79,5 +87,6 @@ int main(int argc, char **argv)
         if (games_played % 16 == 0) {
             mp.save_to_file("matchboxes.dat");
         }
+        if (games_played == 32) goto restart;
     }
 }
