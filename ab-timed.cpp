@@ -245,7 +245,15 @@ private:
 
         int who = s_.active_player();
         int columns = s_.count_columns();
-        if (columns <= 1) columns = 0;
+
+        if (columns == 0) {
+            // First move of the game; don't waste time exploring it.
+            set_and_notify(0, 0);
+        } else if (columns == 1) {
+            // Second move of the game; I conjecture that leaving the baseline open-ended is always a mistake.
+            set_and_notify(1, 1);
+        }
+
         for (int m = -1; m <= columns; ++m) {
             State next = s_;
             if (next.apply_in_place_without_drawing(m)) {
