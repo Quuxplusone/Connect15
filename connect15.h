@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+#include "nibble_writer.h"
+#include "packed_state.h"
+
 enum Color {
     Red = 0,
     Black = 1,
@@ -25,6 +28,7 @@ struct Card {
     }
     Color color() const { return who_; }
     int value() const { return value_; }
+
     std::string toString() const {
         std::string result = "..";
         if (who_ != Nobody) {
@@ -32,6 +36,12 @@ struct Card {
             result[1] = (who_ == Red) ? 'r' : 'b';
         }
         return result;
+    }
+
+    nibble_writer toPacked(nibble_writer it) const {
+        int value = (who_ == Nobody) ? 0 : ((who_ * 8) + value_);
+        it.write(value);
+        return it;
     }
 
     friend bool operator==(Card a, Card b) noexcept {
@@ -127,6 +137,17 @@ public:
             result += " ..\n";
         }
         return result;
+    }
+
+    nibble_writer toPacked(nibble_writer it) const {
+        for (int i=0; i < int(columns_.size()); ++i) {
+            const Column& col = columns_[i];
+            for (int j=0; j < col.size(); ++j) {
+                it = col[j].toPacked(it);
+            }
+            it = Card().toPacked(it);
+        }
+        return it;
     }
 
 private:
@@ -275,6 +296,23 @@ struct State {
         result += "Red's top card: " + top_card_[Red].toString() + "\n";
         result += "Black's top card: " + top_card_[Black].toString();
         return result;
+    }
+
+    nibble_writer toPacked(nibble_writer it) const {
+        it.write(who_);
+        it = top_card_[Red].toPacked(it);
+        it = top_card_[Black].toPacked(it);
+        it = board_.toPacked(it);
+        return it;
+    }
+
+    PackedState toPacked() const {
+        PackedState p;
+        nibble_writer it = nibble_writer(p.data_);
+        it = this->toPacked(it);
+        uint8_t *end = it.round_off_and_get();
+        assert((end - p.data_) <= sizeof p.data_);
+        return p;
     }
 
     Color active_player() const {
