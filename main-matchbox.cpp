@@ -37,7 +37,7 @@ restart:
             printf("Scheduled %d tasks, ran %d tasks, search depth %d.\n",
                    recursively_scheduled_tasks, recursively_evaluated_tasks, max_search_depth.load());
             if (vm.first >= INT_MAX) {
-                mp.record_definitely_winning_move(s, vm.second);
+                mp.record_definitely_best_move(s, vm.second);
             }
             return vm.second;
         };
@@ -46,7 +46,7 @@ restart:
             auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(50));
             if (vm.first >= INT_MAX) {
                 std::cout << "AI sees the winning move " << vm.second << " and is forcing MP to take it.\n";
-                mp.record_definitely_winning_move(s, vm.second);
+                mp.record_definitely_best_move(s, vm.second);
             }
             int move = mp.pick_move(true_rand, s);
             std::cout << "MP picked " << move << " for " << swho << ".\n";
@@ -54,6 +54,12 @@ restart:
         };
 
         for (Color who = Red; true; who = Color(1 - who)) {
+
+            auto fm = s.must_respond_to_threat();
+            if (fm.is_forced) {
+                mp.record_definitely_best_move(s, fm.move);
+            }
+
             std::cout << s.toString() << "\n";
             const char *swho = ((who == Red) ? "Red" : "Black");
             int move;

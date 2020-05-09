@@ -52,7 +52,7 @@ void MatchboxPlayer::save_to_file(const char *filename) const
     fclose(fp);
 }
 
-void MatchboxPlayer::record_definitely_winning_move(const State& s, int move)
+void MatchboxPlayer::record_definitely_best_move(const State& s, int move)
 {
     int columns = s.count_columns();
     std::pair<PackedState, bool> key_flipHorizontal = s.toPackedCanonical();
@@ -64,7 +64,7 @@ void MatchboxPlayer::record_definitely_winning_move(const State& s, int move)
     if (key_flipHorizontal.second) {
         move = s.count_columns() - move - 1;
     }
-    it->second.record_definitely_winning_move(move);
+    it->second.record_definitely_best_move(move);
 }
 
 void MatchboxPlayer::record_win_and_reset()
