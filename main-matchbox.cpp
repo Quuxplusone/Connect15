@@ -48,9 +48,13 @@ restart:
                 std::cout << "AI sees the winning move " << vm.second << " and is forcing MP to take it.\n";
                 mp.record_definitely_best_move(s, vm.second);
             }
-            int move = mp.pick_move(true_rand, s);
-            std::cout << "MP picked " << move << " for " << swho << ".\n";
-            return move;
+            auto pm = mp.pick_move(true_rand, s);
+            std::cout << "MP picked " << pm.move << " for " << swho << ".";
+            if (pm.was_familiar) {
+                std::cout << "                 This position was familiar!";
+            }
+            std::cout << "\n";
+            return pm.move;
         };
 
         for (Color who = Red; true; who = Color(1 - who)) {

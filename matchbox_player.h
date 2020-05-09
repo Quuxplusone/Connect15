@@ -10,11 +10,16 @@
 
 class MatchboxPlayer {
 public:
+    struct PickedMove {
+        int move;
+        bool was_familiar;
+    };
+
     void load_from_file(const char *filename);
     void save_to_file(const char *filename) const;
 
     template<class Random>
-    int pick_move(Random rand, const State& s);
+    PickedMove pick_move(Random rand, const State& s);
 
     void record_definitely_best_move(const State& s, int m);
     void record_win_and_reset();
@@ -94,13 +99,14 @@ private:
 };
 
 template<class Random>
-int MatchboxPlayer::pick_move(Random rand, const State& s)
+MatchboxPlayer::PickedMove MatchboxPlayer::pick_move(Random rand, const State& s)
 {
     int columns = s.count_columns();
     std::pair<PackedState, bool> key_flipHorizontal = s.toPackedCanonical();
     const PackedState& key = key_flipHorizontal.first;
     auto it = map_.find(key);
-    if (it == map_.end()) {
+    bool was_familiar = (it != map_.end());
+    if (!was_familiar) {
         it = map_.emplace(key, Choices(s.count_columns() + 1)).first;
     }
     Choices& choices = it->second;
@@ -109,5 +115,5 @@ int MatchboxPlayer::pick_move(Random rand, const State& s)
     if (key_flipHorizontal.second) {
         move = s.count_columns() - move - 1;
     }
-    return move;
+    return { move, was_familiar };
 }
