@@ -1,6 +1,7 @@
 #include "ab-timed.h"
 #include "matchbox_player.h"
 #include "state.h"
+#include <functional>
 #include <iostream>
 #include <random>
 #include <stdlib.h>
@@ -29,7 +30,7 @@ restart:
     for (int& i : winsByPlayer) i = 0;
 
     for (size_t games_played = 0; true; ++games_played) {
-        State s = State::initial(reproducible_rand);
+        State s = State::initial(std::ref(reproducible_rand));
         Color mpColor = Color(games_played % 2);
         Color humanColor = play_versus_human ? Color(1 - mpColor) : Nobody;
 
@@ -59,7 +60,7 @@ restart:
                 std::cout << "AI sees the winning move " << vm.second << " and is forcing MP to take it.\n";
                 mp.record_definitely_best_move(s, vm.second);
             }
-            auto pm = mp.pick_move(true_rand, s);
+            auto pm = mp.pick_move(std::ref(true_rand), s);
             std::cout << "MP picked " << pm.move << " for " << swho << ".";
             if (pm.was_familiar) {
                 std::cout << "                 This position was familiar!";
@@ -85,7 +86,7 @@ restart:
             } else {
                 move = get_bfs_move(swho);
             }
-            bool won = s.apply_in_place(reproducible_rand, move);
+            bool won = s.apply_in_place(std::ref(reproducible_rand), move);
             if (won) {
                 std::cout << swho << " just won the game!\n";
                 winsByColor[who] += 1;
@@ -111,7 +112,7 @@ restart:
             if (games_played % 16 == 0) {
                 mp.save_to_file("matchboxes.dat");
             }
-            if (seed != 0 && games_played == 32) goto restart;
+            if (seed != 0 && games_played == 31) goto restart;
         }
     }
 }
