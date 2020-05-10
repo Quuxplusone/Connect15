@@ -113,6 +113,8 @@ struct Task : std::enable_shared_from_this<Task> {
     void got_awesome_subresult() { do_got_awesome_subresult(); }
     void evaluate_and_notify() { do_evaluate_and_notify(); }
 
+    virtual ~Task() = default;
+
 private:
     virtual void do_got_one_subresult() = 0;
     virtual void do_got_awesome_subresult() = 0;
@@ -240,7 +242,6 @@ private:
         }
 #endif
 
-        int who = s_.active_player();
         int columns = s_.count_columns();
 
         if (columns == 0) {

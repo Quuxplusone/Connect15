@@ -101,7 +101,6 @@ private:
 template<class Random>
 MatchboxPlayer::PickedMove MatchboxPlayer::pick_move(Random rand, const State& s)
 {
-    int columns = s.count_columns();
     std::pair<PackedState, bool> key_flipHorizontal = s.toPackedCanonical();
     const PackedState& key = key_flipHorizontal.first;
     auto it = map_.find(key);

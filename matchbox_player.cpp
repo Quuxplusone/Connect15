@@ -54,7 +54,6 @@ void MatchboxPlayer::save_to_file(const char *filename) const
 
 void MatchboxPlayer::record_definitely_best_move(const State& s, int move)
 {
-    int columns = s.count_columns();
     std::pair<PackedState, bool> key_flipHorizontal = s.toPackedCanonical();
     const PackedState& key = key_flipHorizontal.first;
     auto it = map_.find(key);

@@ -7,8 +7,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-int winsByColor[3] = { 0, 0, 0 };
-int winsByPlayer[3] = { 0, 0, 0 };
+int wins[2][3] = {};
 
 int main(int argc, char **argv)
 {
@@ -26,8 +25,7 @@ restart:
     std::mt19937 reproducible_rand;
     reproducible_rand.seed(seed ? seed : time(nullptr));
 
-    for (int& i : winsByColor) i = 0;
-    for (int& i : winsByPlayer) i = 0;
+    memset(wins, '\0', sizeof(wins));
 
     for (size_t games_played = 0; true; ++games_played) {
         State s = State::initial(std::ref(reproducible_rand));
@@ -89,8 +87,7 @@ restart:
             bool won = s.apply_in_place(std::ref(reproducible_rand), move);
             if (won) {
                 std::cout << swho << " just won the game!\n";
-                winsByColor[who] += 1;
-                winsByPlayer[who == mpColor] += 1;
+                wins[mpColor][who] += 1;
                 if (who == mpColor) {
                     mp.record_win_and_reset();
                 } else {
@@ -99,16 +96,15 @@ restart:
                 break;
             } else if (s.is_tie_game()) {
                 std::cout << "Tie game!\n";
-                winsByColor[Nobody] += 1;
-                winsByPlayer[2] += 1;
+                wins[mpColor][Nobody] += 1;
                 mp.record_tie_and_reset();
                 break;
             }
         }
 
         if (train_versus_ai) {
-            printf("%*s Wins: Red %d, Black %d, Nobody %d\n", 40, "", winsByColor[Red], winsByColor[Black], winsByColor[Nobody]);
-            printf("%*s       AI %d, MP %d, tie %d\n", 40, "", winsByPlayer[0], winsByPlayer[1], winsByPlayer[2]);
+            printf("%*s Wins when MP plays red: R %d, B %d, Tie %d\n", 40, "", wins[0][Red], wins[0][Black], wins[0][Nobody]);
+            printf("%*s                  black: R %d, B %d, Tie %d\n", 40, "", wins[1][Red], wins[1][Black], wins[1][Nobody]);
             if (games_played % 16 == 0) {
                 mp.save_to_file("matchboxes.dat");
             }
