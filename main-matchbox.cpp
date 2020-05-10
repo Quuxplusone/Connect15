@@ -11,6 +11,10 @@ int winsByPlayer[3] = { 0, 0, 0 };
 
 int main(int argc, char **argv)
 {
+    const bool play_versus_human = (argc > 1 && argv[1] == std::string("me"));
+    const bool train_versus_ai = !play_versus_human;
+    int seed = (argc > 1) ? atoi(argv[1]) : 0;
+
     std::mt19937 true_rand;
     true_rand.seed(time(nullptr));
 
@@ -19,20 +23,27 @@ int main(int argc, char **argv)
 
 restart:
     std::mt19937 reproducible_rand;
-    if (argc > 1) {
-        reproducible_rand.seed(atoi(argv[1]));
-    } else {
-        reproducible_rand.seed(time(nullptr));
-    }
+    reproducible_rand.seed(seed ? seed : time(nullptr));
+
     for (int& i : winsByColor) i = 0;
     for (int& i : winsByPlayer) i = 0;
 
     for (size_t games_played = 0; true; ++games_played) {
         State s = State::initial(reproducible_rand);
         Color mpColor = Color(games_played % 2);
+        Color humanColor = play_versus_human ? Color(1 - mpColor) : Nobody;
+
+        auto get_human_move = [&](const char *swho) {
+            std::cout << swho << "'s move? " << std::flush;
+            int move;
+            std::cin >> move;
+            assert(std::cin.good());
+            assert(-1 <= move && move <= s.count_columns());
+            return move;
+        };
 
         auto get_bfs_move = [&](const char *swho) {
-            auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(50));
+            auto vm = recursively_evaluate(simplest_eval, s, std::chrono::milliseconds(10));
             std::cout << "AI thinks " << swho << "'s best move is " << vm.second << " (value " << vm.first << ").\n";
             printf("Scheduled %d tasks, ran %d tasks, search depth %d.\n",
                    recursively_scheduled_tasks, recursively_evaluated_tasks, max_search_depth.load());
@@ -69,6 +80,8 @@ restart:
             int move;
             if (who == mpColor) {
                 move = get_mp_move(swho);
+            } else if (who == humanColor) {
+                move = get_human_move(swho);
             } else {
                 move = get_bfs_move(swho);
             }
@@ -92,11 +105,13 @@ restart:
             }
         }
 
-        printf("%*s Wins: Red %d, Black %d, Nobody %d\n", 40, "", winsByColor[Red], winsByColor[Black], winsByColor[Nobody]);
-        printf("%*s       AI %d, MP %d, tie %d\n", 40, "", winsByPlayer[0], winsByPlayer[1], winsByPlayer[2]);
-        if (games_played % 16 == 0) {
-            mp.save_to_file("matchboxes.dat");
+        if (train_versus_ai) {
+            printf("%*s Wins: Red %d, Black %d, Nobody %d\n", 40, "", winsByColor[Red], winsByColor[Black], winsByColor[Nobody]);
+            printf("%*s       AI %d, MP %d, tie %d\n", 40, "", winsByPlayer[0], winsByPlayer[1], winsByPlayer[2]);
+            if (games_played % 16 == 0) {
+                mp.save_to_file("matchboxes.dat");
+            }
+            if (seed != 0 && games_played == 32) goto restart;
         }
-        if (games_played == 32) goto restart;
     }
 }
